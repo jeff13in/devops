@@ -77,21 +77,19 @@ cp .env.example .env
 docker compose up --build
 ```
 
-### 3. Verify the service
+### 3. Ingest the sample runbook
 ```bash
-curl -s http://localhost:8001/health | jq
+curl -s -X POST http://localhost:8001/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"directory": "/app/data"}' | jq
 ```
 
 Expected response:
 ```json
-{"status": "ok"}
+{"documents_processed": 1, "chunks_stored": 1}
 ```
 
-### 4. Load runbook data
-The database schema is created automatically. Before asking questions, use the
-ingestion pipeline to store embedded runbook chunks in `document_chunks`.
-
-### 5. Ask a question
+### 4. Ask a question
 ```bash
 curl -s -X POST http://localhost:8001/query \
   -H "Content-Type: application/json" \
@@ -105,7 +103,13 @@ curl -s -X POST http://localhost:8001/query \
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Liveness probe |
+| `POST` | `/ingest` | Embed and store `.md` and `.txt` documents |
 | `POST` | `/query` | Ask a plain-English question |
+
+**POST /ingest**
+```json
+{ "directory": "/app/data" }
+```
 
 **POST /query**
 ```json
@@ -139,10 +143,10 @@ opsbrain/
 ## Development
 
 ### Add a new runbook
-Drop any `.md` or `.txt` file into `docs/`, then re-run ingest:
+Drop any `.md` or `.txt` file into `data/`, then re-run ingest:
 ```bash
 curl -X POST http://localhost:8001/ingest -H "Content-Type: application/json" \
-  -d '{"directory": "./docs"}'
+  -d '{"directory": "/app/data"}'
 ```
 
 ### Run tests

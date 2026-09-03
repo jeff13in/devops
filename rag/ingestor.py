@@ -94,7 +94,7 @@ def build_chunks(
 
     chunk_records: list[DocumentChunk] = []
     for path, text in load_documents(directory):
-        relative_source = path.name
+        relative_source = path.relative_to(root).as_posix()
         for index, chunk in enumerate(
             chunk_text(text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         ):
@@ -104,7 +104,7 @@ def build_chunks(
                     content=chunk,
                     chunk_index=index,
                     metadata={
-                        "path": str(path),
+                        "path": relative_source,
                         "filename": path.name,
                     },
                 )
@@ -131,7 +131,11 @@ class IngestionResult:
 
 
 class PgVectorIngestor:
-    """Embed local runbook chunks with Gemini and store them in pgvector."""
+    """Embed local runbook chunks with Gemini and store them in pgvector.
+
+    Existing chunks from a source are removed in the same transaction before its
+    replacements are inserted, making repeated ingestion runs idempotent.
+    """
 
     def __init__(self, config: RetrieverConfig | None = None) -> None:
         self.config = config or RetrieverConfig()
@@ -147,7 +151,11 @@ class PgVectorIngestor:
             self._embedding_client = GoogleGenerativeAIEmbeddings(
                 model=self.config.embedding_model
             )
-        vectors = list(self._embedding_client.embed_documents([chunk.content for chunk in chunks]))
+        vectors = list(
+            self._embedding_client.embed_documents(
+                [chunk.content for chunk in chunks]
+            )
+        )
         if len(vectors) != len(chunks):
             raise RuntimeError("The embedding service returned an unexpected result count.")
 
