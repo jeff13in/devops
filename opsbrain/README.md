@@ -74,22 +74,24 @@ cp .env.example .env
 
 ### 2. Start services
 ```bash
-docker compose up postgres rag-agent
+docker compose up --build
 ```
 
-### 3. Ingest runbooks
+### 3. Verify the service
 ```bash
-curl -s -X POST http://localhost:8001/ingest \
-  -H "Content-Type: application/json" \
-  -d '{"directory": "./docs"}' | jq
+curl -s http://localhost:8001/health | jq
 ```
 
 Expected response:
 ```json
-{"status": "success", "files_processed": 2, "chunks_stored": 42}
+{"status": "ok"}
 ```
 
-### 4. Ask a question
+### 4. Load runbook data
+The database schema is created automatically. Before asking questions, use the
+ingestion pipeline to store embedded runbook chunks in `document_chunks`.
+
+### 5. Ask a question
 ```bash
 curl -s -X POST http://localhost:8001/query \
   -H "Content-Type: application/json" \
@@ -103,13 +105,7 @@ curl -s -X POST http://localhost:8001/query \
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Liveness probe |
-| `POST` | `/ingest` | Ingest docs from a directory |
 | `POST` | `/query` | Ask a plain-English question |
-
-**POST /ingest**
-```json
-{ "directory": "./docs" }
-```
 
 **POST /query**
 ```json
