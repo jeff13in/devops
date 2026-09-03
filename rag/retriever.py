@@ -93,7 +93,7 @@ class PgVectorRetriever:
                 id,
                 source,
                 content,
-                COALESCE(metadata, '{}'::jsonb) AS metadata,
+                COALESCE(metadata, '{{}}'::jsonb) AS metadata,
                 1 - (embedding <=> {vector}::vector) AS score
             FROM {table}
             ORDER BY embedding <=> {vector}::vector
@@ -153,6 +153,8 @@ class PgVectorRetriever:
             raise RuntimeError(
                 "psycopg is required for vector retrieval. Install requirements first."
             )
+        if not os.getenv("GOOGLE_API_KEY"):
+            raise RuntimeError("GOOGLE_API_KEY must be configured for retrieval.")
         if self._embedding_client is None and GoogleGenerativeAIEmbeddings is None:
             raise RuntimeError(
                 "langchain-google-genai is required for embeddings. Install requirements first."

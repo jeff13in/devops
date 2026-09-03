@@ -9,6 +9,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY rag ./rag
+COPY data ./data
 
 RUN useradd --create-home appuser && chown -R appuser:appuser /app
 USER appuser
