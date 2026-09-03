@@ -92,6 +92,7 @@ def build_chunks(
 ) -> list[DocumentChunk]:
     """Load all supported files in a directory and return chunk records."""
 
+    root = Path(directory).expanduser().resolve()
     chunk_records: list[DocumentChunk] = []
     for path, text in load_documents(directory):
         relative_source = path.relative_to(root).as_posix()
