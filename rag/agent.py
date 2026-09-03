@@ -236,9 +236,7 @@ class RAGAgent:
         citations = re.findall(r"\[([^\]]+)\]", cleaned)
         invalid_citations = [citation for citation in citations if citation not in allowed_sources]
         if invalid_citations:
-            validation_errors.append(
-                "The answer referenced sources that were not retrieved."
-            )
+            # Replace unsupported model citations with extractive, retrieved text.
             cleaned = self._fallback_answer("", chunks, validation_errors)
             citations = re.findall(r"\[([^\]]+)\]", cleaned)
 
