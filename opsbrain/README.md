@@ -36,7 +36,7 @@ User (CLI / Slack)
 | Agent | What it does | Stage |
 |-------|-------------|-------|
 | **Orchestrator** | Receives questions, routes to agents, synthesises answers | 2 |
-| **RAG Agent** | Searches runbooks + docs via pgvector, answers via GPT-4o | **1 ✅** |
+| **RAG Agent** | Searches runbooks + docs via pgvector, answers via Gemini | **1 ✅** |
 | **Monitoring Agent** | Queries Prometheus metrics and Grafana dashboards | 2 |
 | **Infra Agent** | Checks AWS state, K8s pod health, Terraform plans | 2 |
 | **Code Agent** | Reads GitHub PRs, GitHub Actions pipeline status | 2 |
@@ -47,7 +47,7 @@ User (CLI / Slack)
 
 | Layer | Technology |
 |-------|-----------|
-| AI / Agents | LangGraph, LangChain, GPT-4o, OpenAI embeddings |
+| AI / Agents | LangGraph, LangChain, Gemini, Gemini embeddings |
 | Backend | Python 3.11, FastAPI, Pydantic, Uvicorn |
 | Vector DB | PostgreSQL 16 + pgvector |
 | Message bus | Apache Kafka (local) / Amazon MSK (production) |
@@ -64,12 +64,12 @@ User (CLI / Slack)
 
 ### Prerequisites
 - Docker + Docker Compose
-- An OpenAI API key
+- A Google AI API key
 
 ### 1. Configure environment
 ```bash
 cp .env.example .env
-# Edit .env and set OPENAI_API_KEY and POSTGRES_PASSWORD
+# Edit .env and set GOOGLE_API_KEY and POSTGRES_PASSWORD
 ```
 
 ### 2. Start services
