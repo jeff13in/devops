@@ -10,7 +10,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY rag ./rag
 COPY data ./data
-COPY tests ./tests
+COPY tests/test_ingestor.py ./tests/test_ingestor.py
+COPY tests/test_rag_agent.py ./tests/test_rag_agent.py
 
 RUN useradd --create-home appuser && chown -R appuser:appuser /app
 USER appuser

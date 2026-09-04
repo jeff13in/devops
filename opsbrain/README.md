@@ -170,10 +170,9 @@ shows the configured backend URLs:
 Invoke-RestMethod http://localhost:8002/health
 ```
 
-This is the smoke test shown in the browser. Prometheus is included in the
-Compose stack; Grafana and Alertmanager must be added or run separately before
-their routes can return data. The default `.env` values work when the backends
-run as Docker Compose services:
+This is the smoke test shown in the browser. The local Compose stack includes
+Prometheus, Alertmanager, Grafana, and a deterministic demo pod-metrics
+exporter. The default `.env` values work with this stack:
 
 ```dotenv
 # Use these values when the backends run as Docker Compose services.
@@ -189,7 +188,7 @@ GRAFANA_API_TOKEN=
 ```
 
 ```powershell
-docker compose up --build -d prometheus monitoring-agent
+docker compose up --build -d
 ```
 
 ### Prometheus console
@@ -218,10 +217,36 @@ rate(prometheus_http_requests_total[5m])
 ```
 
 For the rate query, select the **Graph** tab to view the time series. Use
-**Status > Targets** in the Prometheus UI to verify that the `prometheus`
-target is `UP`. The initial setup scrapes Prometheus itself only, so Kubernetes
-pod and application metrics will appear after additional scrape targets are
-configured.
+**Status > Targets** in the Prometheus UI to verify that the `prometheus` and
+`demo-kube-state-metrics` targets are `UP`. The demo target supplies local pod
+health data; real Kubernetes and application metrics require additional scrape
+targets in production.
+
+### Local demo data
+
+The Compose stack also starts a `pod-metrics` development fixture. It exposes
+`kube-state-metrics`-shaped data so the Monitoring Agent can be tested without
+a Kubernetes cluster. It reports one healthy pod (`demo/api-0`) and one
+degraded pod (`demo/worker-0`) with a `CrashLoopBackOff` reason and restarts.
+Prometheus evaluates this data into the `DemoPodRestarting` warning alert.
+
+Use these requests after waiting about 10 seconds for Prometheus to scrape and
+evaluate the demo metrics:
+
+```powershell
+Invoke-RestMethod "http://localhost:8002/pods/health?namespace=demo"
+Invoke-RestMethod http://localhost:8002/alerts
+Invoke-RestMethod http://localhost:8002/alerts/summary
+```
+
+Grafana is available at `http://localhost:3000`. The local development setup
+uses anonymous admin access only so its API can be tested without a token. Open
+the provisioned **OpsBrain Monitoring Overview** dashboard, or query it through
+the Monitoring Agent:
+
+```powershell
+Invoke-RestMethod http://localhost:8002/dashboards/opsbrain-overview
+```
 
 ### Prometheus through the Monitoring Agent
 
@@ -238,7 +263,7 @@ Query a time range for CPU, memory, or an application metric by including
 
 ```powershell
 $rangeBody = @{
-  query = "rate(container_cpu_usage_seconds_total[5m])"
+  query = "rate(kube_pod_container_status_restarts_total[5m])"
   start = (Get-Date).ToUniversalTime().AddMinutes(-15).ToString("o")
   end = (Get-Date).ToUniversalTime().ToString("o")
   step = "60s"
@@ -262,15 +287,15 @@ Invoke-RestMethod http://localhost:8002/pods/health
 Invoke-RestMethod "http://localhost:8002/pods/health?namespace=default"
 ```
 
-Test Grafana using a service-account token with dashboard read access. For a
-panel query, obtain the Prometheus datasource UID from Grafana's datasource
-settings:
+Test Grafana using the provisioned `prometheus` datasource UID. The local stack
+does not require `GRAFANA_API_TOKEN`; use a service-account token with dashboard
+read access when connecting to a non-development Grafana instance:
 
 ```powershell
-Invoke-RestMethod http://localhost:8002/dashboards/<dashboard-uid>
+Invoke-RestMethod http://localhost:8002/dashboards/opsbrain-overview
 
 $panelBody = @{
-  datasource_uid = "<prometheus-datasource-uid>"
+  datasource_uid = "prometheus"
   expr = "up"
   from_minutes_ago = 15
   ref_id = "A"
@@ -283,6 +308,55 @@ alert routes return a count or summary, pod health returns a status breakdown,
 and Grafana requests return dashboard panels or query results. A `503` response
 means the agent could not reach the configured monitoring backend; check its
 URL, Docker network, and Grafana token.
+
+### Complete local verification
+
+Run this checklist from the repository root after starting the stack. Wait about
+10 seconds after startup so Prometheus can scrape the demo exporter and evaluate
+the alert rule:
+
+```powershell
+docker compose up --build -d
+docker compose ps
+```
+
+`prometheus` should be `healthy`; the remaining services should be running. Run
+the following requests:
+
+```powershell
+$metricBody = @{ query = "up" } | ConvertTo-Json
+Invoke-RestMethod http://localhost:8002/metrics/query -Method Post -ContentType "application/json" -Body $metricBody
+Invoke-RestMethod "http://localhost:8002/pods/health?namespace=demo"
+Invoke-RestMethod http://localhost:8002/alerts/summary
+Invoke-RestMethod http://localhost:8002/dashboards/opsbrain-overview
+
+$panelBody = @{ datasource_uid = "prometheus"; expr = "up"; from_minutes_ago = 15; ref_id = "A" } | ConvertTo-Json
+Invoke-RestMethod http://localhost:8002/dashboards/panel-query -Method Post -ContentType "application/json" -Body $panelBody
+```
+
+The expected local-demo results are: a non-zero metric `result_count`, two demo
+pods with one `healthy` and one `degraded`, one active `DemoPodRestarting`
+warning, a Grafana dashboard with one panel, and Grafana panel results under
+key `A`.
+
+To test the RAG Agent live, first set a valid `GOOGLE_API_KEY` in `.env`. This
+uses the Google API. Ingest the bundled runbooks and ask a question:
+
+```powershell
+$ingestBody = @{ directory = "/app/data" } | ConvertTo-Json
+Invoke-RestMethod http://localhost:8001/ingest -Method Post -ContentType "application/json" -Body $ingestBody
+
+$questionBody = @{ question = "What should I do when CPU usage is high?"; top_k = 4 } | ConvertTo-Json
+Invoke-RestMethod http://localhost:8001/query -Method Post -ContentType "application/json" -Body $questionBody
+```
+
+A successful RAG response has `grounded: true`, at least one retrieved chunk,
+and runbook filenames in `sources`. Run the offline unit suites at any time:
+
+```powershell
+docker compose exec rag-agent python -m unittest discover -s tests -v
+docker compose exec monitoring-agent python -m unittest discover -s tests -v
+```
 
 ### Monitoring API reference
 
@@ -355,6 +429,13 @@ curl -X POST http://localhost:8001/ingest -H "Content-Type: application/json" \
 ### Run tests
 ```bash
 python -m unittest discover -s tests -v
+```
+
+Or run the isolated test suites from their Docker containers:
+
+```powershell
+docker compose exec rag-agent python -m unittest discover -s tests -v
+docker compose exec monitoring-agent python -m unittest discover -s tests -v
 ```
 
 ### Lint
