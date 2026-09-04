@@ -300,8 +300,28 @@ URL, Docker network, and Grafana token.
 
 ## Project Structure
 
-The current implementation uses top-level `rag/` and `monitoring/` service
-directories. The diagram below describes the planned broader platform layout.
+The current, runnable repository structure is:
+
+```text
+devops/
+|-- rag/                 # RAG Agent FastAPI service
+|-- monitoring/          # Monitoring Agent FastAPI service
+|   |-- __init__.py
+|   |-- agent.py         # Prometheus, Grafana, and Alertmanager tools
+|   |-- main.py          # Monitoring API endpoints
+|   `-- Dockerfile
+|-- data/                # Runbooks ingested by the RAG Agent
+|-- database/            # pgvector initialization
+|-- tests/               # RAG and Monitoring unit tests
+|-- compose.yaml
+|-- .env.example
+`-- README.md            # Entry point for this guide
+```
+
+### Future planned layout
+
+The diagram below describes the broader platform planned for later stages; it
+does not represent the current filesystem.
 
 ```
 opsbrain/
