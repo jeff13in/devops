@@ -31,5 +31,14 @@ services:
       db:
         condition: service_healthy
 
+  monitoring-agent:
+    build:
+      context: .
+      dockerfile: monitoring/Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "8002:8002"
+
 volumes:
   postgres_data:

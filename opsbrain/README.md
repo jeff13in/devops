@@ -118,7 +118,156 @@ curl -s -X POST http://localhost:8001/query \
 
 ---
 
+## Run and Use the Agents
+
+Start the available agents and database from the repository root:
+
+```bash
+docker compose up --build
+```
+
+The RAG Agent is available at `http://localhost:8001` and the Monitoring Agent
+is available at `http://localhost:8002`. FastAPI's interactive API pages are
+also useful while developing:
+
+```text
+http://localhost:8001/docs
+http://localhost:8002/docs
+```
+
+### RAG Agent workflow
+
+1. Confirm that the service is running:
+
+```powershell
+Invoke-RestMethod http://localhost:8001/health
+```
+
+2. Place `.md` or `.txt` runbooks in `data/`, then ingest them. The `data`
+directory is mounted in the container as `/app/data`:
+
+```powershell
+$ingestBody = @{ directory = "/app/data" } | ConvertTo-Json
+Invoke-RestMethod http://localhost:8001/ingest -Method Post -ContentType "application/json" -Body $ingestBody
+```
+
+3. Ask a runbook question:
+
+```powershell
+$questionBody = @{ question = "What should I do when CPU usage is high?"; top_k = 4 } | ConvertTo-Json
+Invoke-RestMethod http://localhost:8001/query -Method Post -ContentType "application/json" -Body $questionBody
+```
+
+The query response includes an `answer`, the source documents used, whether the
+answer is `grounded`, and the number of retrieved chunks.
+
+### Monitoring Agent workflow
+
+The Monitoring Agent's health endpoint verifies that its API is running and
+shows the configured backend URLs:
+
+```powershell
+Invoke-RestMethod http://localhost:8002/health
+```
+
+This is the smoke test shown in the browser. The Prometheus, Grafana, and
+Alertmanager routes require those services to be running separately. Before
+testing them, set their reachable URLs in `.env`, then recreate the agent:
+
+```dotenv
+# Use these values when the backends run as Docker Compose services.
+PROMETHEUS_BASE_URL=http://prometheus:9090
+GRAFANA_BASE_URL=http://grafana:3000
+ALERTMANAGER_BASE_URL=http://alertmanager:9093
+
+# If the backends run on your Windows host, use host.docker.internal instead.
+# PROMETHEUS_BASE_URL=http://host.docker.internal:9090
+# GRAFANA_BASE_URL=http://host.docker.internal:3000
+# ALERTMANAGER_BASE_URL=http://host.docker.internal:9093
+GRAFANA_API_TOKEN=
+```
+
+```powershell
+docker compose up --build -d monitoring-agent
+```
+
+Test Prometheus with a metric that exists in your environment. `up` is a good
+first query because it is provided by Prometheus itself:
+
+```powershell
+$metricBody = @{ query = "up" } | ConvertTo-Json
+Invoke-RestMethod http://localhost:8002/metrics/query -Method Post -ContentType "application/json" -Body $metricBody
+```
+
+Query a time range for CPU, memory, or an application metric by including
+`start`, `end`, and `step`:
+
+```powershell
+$rangeBody = @{
+  query = "rate(container_cpu_usage_seconds_total[5m])"
+  start = (Get-Date).ToUniversalTime().AddMinutes(-15).ToString("o")
+  end = (Get-Date).ToUniversalTime().ToString("o")
+  step = "60s"
+} | ConvertTo-Json
+Invoke-RestMethod http://localhost:8002/metrics/query -Method Post -ContentType "application/json" -Body $rangeBody
+```
+
+Test alert reporting:
+
+```powershell
+Invoke-RestMethod http://localhost:8002/alerts
+Invoke-RestMethod "http://localhost:8002/alerts?active_only=true"
+Invoke-RestMethod http://localhost:8002/alerts/summary
+```
+
+Test Kubernetes pod health. This requires `kube-state-metrics` to be scraped
+by Prometheus because the agent uses `kube_pod_*` metrics:
+
+```powershell
+Invoke-RestMethod http://localhost:8002/pods/health
+Invoke-RestMethod "http://localhost:8002/pods/health?namespace=default"
+```
+
+Test Grafana using a service-account token with dashboard read access. For a
+panel query, obtain the Prometheus datasource UID from Grafana's datasource
+settings:
+
+```powershell
+Invoke-RestMethod http://localhost:8002/dashboards/<dashboard-uid>
+
+$panelBody = @{
+  datasource_uid = "<prometheus-datasource-uid>"
+  expr = "up"
+  from_minutes_ago = 15
+  ref_id = "A"
+} | ConvertTo-Json
+Invoke-RestMethod http://localhost:8002/dashboards/panel-query -Method Post -ContentType "application/json" -Body $panelBody
+```
+
+The monitoring test is successful when metric queries return `result_count`,
+alert routes return a count or summary, pod health returns a status breakdown,
+and Grafana requests return dashboard panels or query results. A `503` response
+means the agent could not reach the configured monitoring backend; check its
+URL, Docker network, and Grafana token.
+
+### Monitoring API reference
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Agent liveness and configured backend URLs |
+| `POST` | `/metrics/query` | Run an instant or range PromQL query |
+| `GET` | `/dashboards/{uid}` | Get Grafana dashboard metadata and panels |
+| `POST` | `/dashboards/panel-query` | Query a Grafana datasource with PromQL |
+| `GET` | `/alerts` | List Alertmanager alerts |
+| `GET` | `/alerts/summary` | Summarize alerts by state and severity |
+| `GET` | `/pods/health` | Aggregate pod phase, readiness, and restarts |
+
+---
+
 ## Project Structure
+
+The current implementation uses top-level `rag/` and `monitoring/` service
+directories. The diagram below describes the planned broader platform layout.
 
 ```
 opsbrain/
@@ -151,14 +300,13 @@ curl -X POST http://localhost:8001/ingest -H "Content-Type: application/json" \
 
 ### Run tests
 ```bash
-pip install pytest
-pytest tests/ -v
+python -m unittest discover -s tests -v
 ```
 
 ### Lint
 ```bash
 pip install ruff
-ruff check agents/ orchestrator/ shared/
+ruff check rag/ monitoring/ tests/
 ```
 
 ---
