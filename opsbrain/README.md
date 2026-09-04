@@ -170,9 +170,10 @@ shows the configured backend URLs:
 Invoke-RestMethod http://localhost:8002/health
 ```
 
-This is the smoke test shown in the browser. The Prometheus, Grafana, and
-Alertmanager routes require those services to be running separately. Before
-testing them, set their reachable URLs in `.env`, then recreate the agent:
+This is the smoke test shown in the browser. Prometheus is included in the
+Compose stack; Grafana and Alertmanager must be added or run separately before
+their routes can return data. The default `.env` values work when the backends
+run as Docker Compose services:
 
 ```dotenv
 # Use these values when the backends run as Docker Compose services.
@@ -188,11 +189,44 @@ GRAFANA_API_TOKEN=
 ```
 
 ```powershell
-docker compose up --build -d monitoring-agent
+docker compose up --build -d prometheus monitoring-agent
 ```
 
-Test Prometheus with a metric that exists in your environment. `up` is a good
-first query because it is provided by Prometheus itself:
+### Prometheus console
+
+Open `http://localhost:9090` to use the Prometheus query console. It is useful
+for validating a PromQL expression before passing the same expression to the
+Monitoring Agent. Enter one of these expressions and select **Execute**:
+
+```promql
+up
+```
+
+`up` should return `1` for the local Prometheus target, confirming it is being
+scraped successfully. Other useful starter queries are:
+
+```promql
+prometheus_build_info
+```
+
+```promql
+process_resident_memory_bytes
+```
+
+```promql
+rate(prometheus_http_requests_total[5m])
+```
+
+For the rate query, select the **Graph** tab to view the time series. Use
+**Status > Targets** in the Prometheus UI to verify that the `prometheus`
+target is `UP`. The initial setup scrapes Prometheus itself only, so Kubernetes
+pod and application metrics will appear after additional scrape targets are
+configured.
+
+### Prometheus through the Monitoring Agent
+
+Send the same PromQL expression through the Monitoring Agent. `up` is a good
+first API query because it is provided by Prometheus itself:
 
 ```powershell
 $metricBody = @{ query = "up" } | ConvertTo-Json

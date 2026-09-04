@@ -40,5 +40,10 @@ services:
     ports:
       - "8002:8002"
 
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    ports:
+      - "9090:9090"
+
 volumes:
   postgres_data:
