@@ -26,9 +26,7 @@ infra/terraform/terraform.tfstate.backup
 infra/terraform/terraform.tfvars
 *.tfplan
 
-# Rifat's portions (RAG agent + docs + monitoring)
-agents/rag/
-agents/monitoring/
+# Rifat's portions (docs)
 docs/
 database/
 infra/alertmanager/
