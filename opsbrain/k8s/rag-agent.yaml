@@ -1,0 +1,70 @@
+# RAG Agent — Kubernetes Deployment + Service
+# Managed by ArgoCD; image tag is updated by the CI/CD pipeline.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-agent
+  namespace: opsbrain
+  labels:
+    app: rag-agent
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: rag-agent
+  template:
+    metadata:
+      labels:
+        app: rag-agent
+    spec:
+      containers:
+        - name: rag-agent
+          image: <AWS_ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/opsbrain-rag:latest
+          ports:
+            - containerPort: 8001
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: opsbrain-secrets
+                  key: openai-api-key
+            - name: POSTGRES_HOST
+              value: "postgres-service"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: opsbrain-secrets
+                  key: postgres-password
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-agent
+  namespace: opsbrain
+spec:
+  selector:
+    app: rag-agent
+  ports:
+    - port: 8001
+      targetPort: 8001
+  type: ClusterIP
