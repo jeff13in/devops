@@ -1,0 +1,43 @@
+# Secrets — never commit these
+.env
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Docker
+.dockerignore
+
+# Terraform
+infra/terraform/.terraform/
+infra/terraform/.terraform.lock.hcl
+infra/terraform/terraform.tfstate
+infra/terraform/terraform.tfstate.backup
+infra/terraform/terraform.tfvars
+*.tfplan
+
+# Rifat's portions (RAG agent + docs + monitoring)
+agents/rag/
+agents/monitoring/
+docs/
+
+# Local notes
+memory.md
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp

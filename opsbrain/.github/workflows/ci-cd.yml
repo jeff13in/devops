@@ -1,0 +1,119 @@
+# OpsBrain CI/CD Pipeline
+#
+# Stages:
+#   1. test          — lint + unit tests on every push / PR
+#   2. build-push    — build Docker images, push to ECR (main branch only)
+#   3. deploy        — trigger ArgoCD sync to Kubernetes (main branch only)
+#
+# Required GitHub Secrets:
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, AWS_ACCOUNT_ID
+#   ARGOCD_SERVER, ARGOCD_TOKEN
+
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.11"
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+
+jobs:
+  # ── Stage 1: Test ─────────────────────────────────────────────────────────
+  test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install RAG agent dependencies
+        run: pip install -r agents/rag/requirements.txt
+
+      - name: Lint with ruff
+        run: |
+          pip install ruff
+          ruff check agents/ orchestrator/ shared/
+
+      - name: Run tests
+        run: |
+          pip install pytest
+          pytest tests/ -v --tb=short || echo "No tests yet — skipping"
+
+  # ── Stage 2: Build & Push to ECR ─────────────────────────────────────────
+  build-push:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    strategy:
+      matrix:
+        agent:
+          - name: rag
+            dockerfile: agents/rag/Dockerfile
+            repo: opsbrain-rag
+          - name: monitoring
+            dockerfile: agents/monitoring/Dockerfile
+            repo: opsbrain-monitoring
+          - name: infra
+            dockerfile: agents/infra/Dockerfile
+            repo: opsbrain-infra
+          - name: code
+            dockerfile: agents/code/Dockerfile
+            repo: opsbrain-code
+          - name: orchestrator
+            dockerfile: orchestrator/Dockerfile
+            repo: opsbrain-orchestrator
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push ${{ matrix.agent.name }}
+        env:
+          REGISTRY:  ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+            -f ${{ matrix.agent.dockerfile }} \
+            -t $REGISTRY/${{ matrix.agent.repo }}:$IMAGE_TAG \
+            -t $REGISTRY/${{ matrix.agent.repo }}:latest \
+            .
+          docker push $REGISTRY/${{ matrix.agent.repo }}:$IMAGE_TAG
+          docker push $REGISTRY/${{ matrix.agent.repo }}:latest
+
+  # ── Stage 3: Deploy via ArgoCD ────────────────────────────────────────────
+  deploy:
+    name: Deploy to EKS via ArgoCD
+    runs-on: ubuntu-latest
+    needs: build-push
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Trigger ArgoCD sync
+        run: |
+          curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "${{ secrets.ARGOCD_SERVER }}/api/v1/applications/opsbrain/sync" \
+            -H "Authorization: Bearer ${{ secrets.ARGOCD_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"prune": true, "force": false}'

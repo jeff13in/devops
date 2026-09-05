@@ -1,0 +1,56 @@
+# Code Agent — Kubernetes Deployment + Service
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: code-agent
+  namespace: opsbrain
+  labels:
+    app: code-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: code-agent
+  template:
+    metadata:
+      labels:
+        app: code-agent
+    spec:
+      containers:
+        - name: code-agent
+          image: <AWS_ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/opsbrain-code:latest
+          ports:
+            - containerPort: 8004
+          env:
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: opsbrain-secrets
+                  key: github-token
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8004
+            initialDelaySeconds: 10
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: code-agent
+  namespace: opsbrain
+spec:
+  selector:
+    app: code-agent
+  ports:
+    - port: 8004
+      targetPort: 8004
+  type: ClusterIP

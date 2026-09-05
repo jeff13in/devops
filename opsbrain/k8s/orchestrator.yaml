@@ -1,0 +1,79 @@
+# Orchestrator — Kubernetes Deployment + Service + Ingress
+# This is the only public-facing service; everything else is ClusterIP.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+  namespace: opsbrain
+  labels:
+    app: orchestrator
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: orchestrator
+  template:
+    metadata:
+      labels:
+        app: orchestrator
+    spec:
+      containers:
+        - name: orchestrator
+          image: <AWS_ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/opsbrain-orchestrator:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: opsbrain-secrets
+                  key: openai-api-key
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestrator
+  namespace: opsbrain
+spec:
+  selector:
+    app: orchestrator
+  ports:
+    - port: 8000
+      targetPort: 8000
+  type: ClusterIP
+---
+# Expose the orchestrator externally via an ALB Ingress (AWS Load Balancer Controller)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: orchestrator-ingress
+  namespace: opsbrain
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: orchestrator
+                port:
+                  number: 8000
