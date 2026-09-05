@@ -30,6 +30,10 @@ infra/terraform/terraform.tfvars
 agents/rag/
 agents/monitoring/
 docs/
+database/
+infra/alertmanager/
+infra/grafana/
+infra/prometheus/rules/
 
 # Local notes
 memory.md
