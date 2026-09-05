@@ -9,5 +9,6 @@ CREATE TABLE IF NOT EXISTS document_chunks (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS document_chunks_embedding_hnsw_idx
-    ON document_chunks USING hnsw (embedding vector_cosine_ops);
+-- Use exact cosine search for the local runbook corpus. The default Gemini
+-- vectors have 3072 dimensions; pgvector HNSW's vector type supports at most
+-- 2000. Creating that index here aborts initialization on a fresh database.

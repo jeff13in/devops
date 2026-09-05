@@ -12,6 +12,9 @@ COPY rag ./rag
 COPY data ./data
 COPY tests/test_ingestor.py ./tests/test_ingestor.py
 COPY tests/test_rag_agent.py ./tests/test_rag_agent.py
+COPY tests/test_database.py ./tests/test_database.py
+COPY database ./database
+COPY scripts/validate_rag.py ./scripts/validate_rag.py
 
 RUN useradd --create-home appuser && chown -R appuser:appuser /app
 USER appuser

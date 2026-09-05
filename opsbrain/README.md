@@ -74,7 +74,7 @@ cp .env.example .env
 
 ### 2. Start services
 ```bash
-docker compose up --build
+docker compose up --build -d rag-agent
 ```
 
 ### 3. Ingest the sample runbook
@@ -86,7 +86,7 @@ curl -s -X POST http://localhost:8001/ingest \
 
 Expected response:
 ```json
-{"documents_processed": 1, "chunks_stored": 1}
+{"documents_processed": 2, "chunks_stored": 6}
 ```
 
 ### 4. Ask a question
@@ -95,6 +95,40 @@ curl -s -X POST http://localhost:8001/query \
   -H "Content-Type: application/json" \
   -d '{"question": "What should I do when CPU usage is high?"}' | jq
 ```
+
+### 5. Validate the Week 1 local flow (OPU-40)
+
+From the repository root, run the live acceptance check:
+
+```powershell
+docker compose exec rag-agent python -m scripts.validate_rag
+```
+
+This uses the configured Google API and reingests the bundled runbooks twice.
+It checks persisted text, chunk metadata, nonzero 3,072-dimension vectors,
+repeat-ingestion counts, retrieval, and a grounded answer citing the CPU runbook.
+Every stage must print `PASS`; failure exits nonzero. Counts change if you edit
+the sample runbooks. The API can return its validated extractive fallback when
+generated citations are unsupported; `grounded` alone does not prove that the
+answer is model-generated.
+
+Run the offline RAG tests and the real-database setup regression:
+
+```powershell
+docker compose exec rag-agent python -m unittest discover -s tests -v
+docker compose exec rag-agent sh -c 'RAG_TEST_DATABASE_URL="$DATABASE_URL" python -m unittest discover -s tests -p test_database.py -v'
+```
+
+The database test applies `database/init.sql` in a temporary schema, checks
+3,072-dimension storage and cosine retrieval, then rolls back everything. It is
+skipped in the offline suite unless `RAG_TEST_DATABASE_URL` is set.
+
+The local corpus uses exact cosine search. An HNSW index on `vector(3072)` is
+not supported and previously caused first-start database initialization to fail.
+Existing databases need no vector migration or volume deletion for this fix.
+`/health` is only a liveness check; use the validation command to check the full
+database and Google API path. See [the validation record](validation/OPU-40.md)
+for results and the Week 1 dependency review.
 
 ---
 
