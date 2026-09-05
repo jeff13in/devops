@@ -1,18 +1,11 @@
 # OpsBrain — local development environment
 #
-# Stage 1 (RAG agent only):
-#   docker compose up postgres rag-agent
-#
 # Full stack (all agents + Kafka + Prometheus):
 #   docker compose --profile full up
 #
 # First-time setup:
-#   1. cp .env.example .env  →  fill in GOOGLE_API_KEY (free tier: aistudio.google.com/apikey)
-#   2. docker compose up postgres rag-agent
-#   3. curl -X POST http://localhost:8001/ingest -H "Content-Type: application/json" \
-#        -d '{"directory": "./docs"}'
-#   4. curl -X POST http://localhost:8001/query -H "Content-Type: application/json" \
-#        -d '{"question": "What should I do when CPU is high?"}'
+#   1. cp .env.example .env  →  fill in required values
+#   2. docker compose --profile full up
 
 services:
 
@@ -28,6 +21,7 @@ services:
       - "5434:5432"   # 5432/5433 remapped: host already runs two native Postgres instances on those ports
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U opsbrain -d opsbrain"]
       interval: 10s
@@ -46,16 +40,13 @@ services:
       GOOGLE_API_KEY:         ${GOOGLE_API_KEY}
       GOOGLE_EMBEDDING_MODEL: models/gemini-embedding-001
       GOOGLE_CHAT_MODEL:      gemini-3.6-flash
-      POSTGRES_HOST:          postgres
-      POSTGRES_PORT:          5432
-      POSTGRES_DB:            opsbrain
-      POSTGRES_USER:          opsbrain
-      POSTGRES_PASSWORD:      ${POSTGRES_PASSWORD}
+      DATABASE_URL:           postgresql://opsbrain:${POSTGRES_PASSWORD}@postgres:5432/opsbrain
     volumes:
-      - ./docs:/app/docs:ro   # mount docs so you can add runbooks without rebuilding
+      - ./docs:/app/data:ro   # mount docs so you can add runbooks without rebuilding
     depends_on:
       postgres:
         condition: service_healthy
+    profiles: [full]
 
   # ── Orchestrator (Stage 2) ──────────────────────────────────────────────────
   orchestrator:
@@ -67,11 +58,9 @@ services:
       - "8000:8000"
     environment:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY}
-    depends_on:
-      - rag-agent
     profiles: [full]
 
-  # ── Monitoring Agent (Stage 2) ──────────────────────────────────────────────
+  # ── Monitoring Agent (Stage 2) ───────────────────────────────────────────────
   monitoring-agent:
     build:
       context: .
@@ -79,6 +68,16 @@ services:
     restart: unless-stopped
     ports:
       - "8002:8002"
+    environment:
+      PROMETHEUS_BASE_URL:                 http://prometheus:9090
+      GRAFANA_BASE_URL:                    http://grafana:3000
+      GRAFANA_API_TOKEN:                   ${GRAFANA_API_TOKEN}
+      ALERTMANAGER_BASE_URL:               http://alertmanager:9093
+      MONITORING_TIMEOUT_SECONDS:          10
+      MONITORING_DEFAULT_LOOKBACK_MINUTES: 15
+    depends_on:
+      prometheus:
+        condition: service_healthy
     profiles: [full]
 
   # ── Infra Agent (Stage 2) ───────────────────────────────────────────────────
@@ -103,13 +102,65 @@ services:
 
   # ── Prometheus ───────────────────────────────────────────────────────────────
   prometheus:
-    image: prom/prometheus:v2.53.0
+    image: prom/prometheus:v2.54.1
     restart: unless-stopped
     ports:
       - "9090:9090"
     volumes:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/prometheus/rules:/etc/prometheus/rules:ro
       - prometheus_data:/prometheus
+    depends_on:
+      alertmanager:
+        condition: service_started
+      pod-metrics:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:9090/-/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    profiles: [full]
+
+  # ── Alertmanager (feeds Prometheus demo alert rule) ──────────────────────────
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./infra/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    profiles: [full]
+
+  # ── Grafana ───────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.2.0
+    restart: unless-stopped
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED:   "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE:  Admin
+      GF_AUTH_DISABLE_LOGIN_FORM:  "true"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    profiles: [full]
+
+  # ── Demo metrics exporter (fake kube-state-metrics for the demo alert) ───────
+  pod-metrics:
+    build:
+      context: .
+      dockerfile: agents/monitoring/demo-metrics.Dockerfile
+    restart: unless-stopped
+    ports:
+      - "9100:9100"
     profiles: [full]
 
   # ── Kafka (Stage 2) ─────────────────────────────────────────────────────────
@@ -134,3 +185,4 @@ volumes:
   postgres_data:
   kafka_data:
   prometheus_data:
+  grafana_data:
