@@ -11,7 +11,6 @@ from pydantic import BaseModel, Field
 
 from monitoring.agent import MonitoringAgent, MonitoringClientError
 
-
 app = FastAPI(
     title="OpsBrain Monitoring Agent",
     version="0.1.0",

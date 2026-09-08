@@ -1,0 +1,26 @@
+# Union of every agent/orchestrator's runtime dependencies, plus lint/test tooling.
+# Used by CI to lint and (once they exist) run tests across the whole opsbrain/ tree
+# without having to install each service's Dockerfile deps separately.
+
+fastapi
+uvicorn
+pydantic
+pydantic-settings
+httpx
+
+# rag agent
+langchain-core>=0.3,<1.0
+langchain-google-genai>=2.0,<4.0
+langgraph>=0.2,<1.0
+psycopg[binary]>=3.2,<4.0
+
+# orchestrator
+langchain-openai
+
+# infra agent
+boto3
+kubernetes
+
+# tooling
+ruff
+pytest

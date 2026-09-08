@@ -10,15 +10,15 @@ Stage 1: the state definition and node skeletons are here so Stage 2
 can fill in the bodies without restructuring the file.
 """
 
-from typing import Dict, List, TypedDict
+from typing import TypedDict
 
 from langgraph.graph import END, StateGraph
 
 
 class OrchestratorState(TypedDict):
     question: str
-    agents_to_call: List[str]
-    agent_responses: Dict[str, dict]
+    agents_to_call: list[str]
+    agent_responses: dict[str, dict]
     final_answer: str
 
 

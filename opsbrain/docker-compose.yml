@@ -88,6 +88,14 @@ services:
     restart: unless-stopped
     ports:
       - "8003:8003"
+    environment:
+      AWS_REGION:            ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID:     ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      KUBECONFIG:            ${KUBECONFIG:-}
+      TERRAFORM_DIR:         /app/infra/terraform
+    volumes:
+      - ./infra/terraform:/app/infra/terraform:ro
     profiles: [full]
 
   # ── Code Agent (Stage 2) ────────────────────────────────────────────────────
@@ -98,6 +106,9 @@ services:
     restart: unless-stopped
     ports:
       - "8004:8004"
+    environment:
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_REPO:  ${GITHUB_REPO:-}
     profiles: [full]
 
   # ── Prometheus ───────────────────────────────────────────────────────────────

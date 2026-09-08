@@ -1,0 +1,5 @@
+[tool.ruff.lint]
+# SIM117 (combine nested `with` statements) is stylistic and would mean rewriting
+# Rifat's pulled-in RAG code (agents/rag/ingestor.py, retriever.py) purely for lint
+# compliance — see opsbrain/memory.md on that code being his to touch, not ours.
+ignore = ["SIM117"]

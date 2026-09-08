@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 try:
     import psycopg
@@ -17,7 +18,6 @@ except ImportError:  # pragma: no cover - checked before ingestion runs
     Jsonb = None
 
 from rag.retriever import GoogleGenerativeAIEmbeddings, RetrieverConfig
-
 
 SUPPORTED_EXTENSIONS = {".md", ".txt"}
 
