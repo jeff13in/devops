@@ -5,8 +5,6 @@ The routing logic will use an LLM classifier in Stage 2. For now,
 the function signature and return type are defined so Stage 2 can plug in.
 """
 
-from typing import List
-
 
 # Mapping of agent names to their internal service URLs (set via env in prod)
 AGENT_URLS = {
@@ -17,7 +15,7 @@ AGENT_URLS = {
 }
 
 
-def route(question: str) -> List[str]:
+def route(question: str) -> list[str]:
     """Return the list of agent names that should handle this question.
 
     Stage 2 implementation: call gpt-4o with a routing prompt and parse the

@@ -4,9 +4,9 @@ Define every cross-agent data shape here so each microservice speaks
 the same language without duplicating model code.
 """
 
-from typing import Any, Dict, List
-from pydantic import BaseModel
+from typing import Any
 
+from pydantic import BaseModel
 
 # ── RAG Agent ────────────────────────────────────────────────────────────────
 
@@ -19,13 +19,13 @@ class DocumentChunk(BaseModel):
     content: str
     source: str
     chunk_id: int
-    metadata: Dict[str, Any] = {}
+    metadata: dict[str, Any] = {}
 
 
 class QueryResponse(BaseModel):
     question: str
     answer: str
-    sources: List[str]
+    sources: list[str]
     agent: str = "rag"
 
 
@@ -46,4 +46,4 @@ class AgentMessage(BaseModel):
     task_id: str
     from_agent: str
     to_agent: str
-    payload: Dict[str, Any]
+    payload: dict[str, Any]

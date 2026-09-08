@@ -2,7 +2,6 @@
 
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-
 METRICS = b"""# HELP kube_pod_status_phase The pods current phase.
 # TYPE kube_pod_status_phase gauge
 kube_pod_status_phase{namespace="demo",pod="api-0",phase="Running"} 1
@@ -26,7 +25,7 @@ kube_pod_container_status_waiting_reason{namespace="demo",pod="worker-0",contain
 
 
 class MetricsHandler(BaseHTTPRequestHandler):
-    def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
+    def do_GET(self) -> None:
         if self.path != "/metrics":
             self.send_error(404)
             return

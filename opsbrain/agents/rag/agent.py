@@ -20,11 +20,16 @@ except ImportError:  # pragma: no cover - handled with extractive fallback
 
 from rag.retriever import PgVectorRetriever, RetrievedChunk, RetrieverConfig
 
-
 SYSTEM_PROMPT = """You are the OpsBrain RAG agent for DevOps runbooks.
 Answer the user using only the retrieved context.
 If the context is not enough, say that clearly instead of guessing.
 Keep the response concise and include source citations in square brackets like [runbook.md]."""
+
+# Only bracketed content shaped like a filename (word chars/dashes/slashes ending in
+# a dot-extension) counts as a claimed citation. Runbooks are full of shell syntax
+# (e.g. `[ -z "$VAR" ]`) and markdown that also uses square brackets, so a bare
+# `\[([^\]]+)\]` match would false-positive on those and discard good answers.
+CITATION_PATTERN = re.compile(r"\[([\w.\-/]+\.[A-Za-z0-9]+)\]")
 
 
 class AgentState(TypedDict, total=False):
@@ -234,12 +239,12 @@ class RAGAgent:
             cleaned = self._fallback_answer("", chunks, validation_errors)
 
         allowed_sources = {chunk.source for chunk in chunks}
-        citations = re.findall(r"\[([^\]]+)\]", cleaned)
+        citations = CITATION_PATTERN.findall(cleaned)
         invalid_citations = [citation for citation in citations if citation not in allowed_sources]
         if invalid_citations:
             # Replace unsupported model citations with extractive, retrieved text.
             cleaned = self._fallback_answer("", chunks, validation_errors)
-            citations = re.findall(r"\[([^\]]+)\]", cleaned)
+            citations = CITATION_PATTERN.findall(cleaned)
 
         if allowed_sources and not citations:
             cleaned = cleaned.rstrip() + "\n\nSources: " + ", ".join(sorted(allowed_sources))

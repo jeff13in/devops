@@ -11,7 +11,6 @@ from pydantic import BaseModel, Field
 from rag.agent import AgentResponse, RAGAgent
 from rag.ingestor import IngestionResult, PgVectorIngestor
 
-
 logger = logging.getLogger(__name__)
 
 
