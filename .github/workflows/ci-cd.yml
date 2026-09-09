@@ -7,11 +7,15 @@
 # Stages:
 #   1. test          — lint + unit tests on every push / PR
 #   2. build-check    — build every service's Docker image (no push) on PRs, as a merge gate
-#   3. build-push    — build Docker images, push to ECR (main branch only)
+#   3. build-push    — build Docker images, push to GHCR (main branch only)
 #   4. deploy        — trigger ArgoCD sync to Kubernetes (main branch only)
 #
-# Required GitHub Secrets:
-#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, AWS_ACCOUNT_ID
+# Images push to ghcr.io/<owner>/opsbrain-<service> using the automatic
+# GITHUB_TOKEN — no registry secrets to configure. Packages default to
+# private, linked to this repo; flip visibility per-package in GitHub's UI
+# if something outside this repo needs to pull them.
+#
+# Required GitHub Secrets (deploy stage only — AWS/EKS is not live yet):
 #   ARGOCD_SERVER, ARGOCD_TOKEN
 
 name: CI/CD
@@ -26,7 +30,6 @@ on:
 
 env:
   PYTHON_VERSION: "3.11"
-  AWS_REGION: ${{ secrets.AWS_REGION }}
 
 defaults:
   run:
@@ -85,12 +88,16 @@ jobs:
         working-directory: opsbrain
         run: docker build -f ${{ matrix.agent.dockerfile }} -t opsbrain-${{ matrix.agent.name }}:pr-check .
 
-  # ── Stage 3: Build & Push to ECR ─────────────────────────────────────────
+  # ── Stage 3: Build & Push to GHCR ─────────────────────────────────────────
   build-push:
     name: Build & Push Images
     runs-on: ubuntu-latest
     needs: test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    permissions:
+      contents: read
+      packages: write
 
     strategy:
       matrix:
@@ -114,21 +121,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Login to GHCR
+        uses: docker/login-action@v3
         with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push ${{ matrix.agent.name }}
         working-directory: opsbrain
         env:
-          REGISTRY:  ${{ steps.login-ecr.outputs.registry }}
+          REGISTRY:  ghcr.io/${{ github.repository_owner }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
           docker build \
