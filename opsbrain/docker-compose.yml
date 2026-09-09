@@ -1,0 +1,199 @@
+# OpsBrain — local development environment
+#
+# Full stack (all agents + Kafka + Prometheus):
+#   docker compose --profile full up
+#
+# First-time setup:
+#   1. cp .env.example .env  →  fill in required values
+#   2. docker compose --profile full up
+
+services:
+
+  # ── PostgreSQL + pgvector ───────────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       opsbrain
+      POSTGRES_USER:     opsbrain
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5434:5432"   # 5432/5433 remapped: host already runs two native Postgres instances on those ports
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opsbrain -d opsbrain"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── RAG Agent (Stage 1) ─────────────────────────────────────────────────────
+  rag-agent:
+    build:
+      context: .
+      dockerfile: agents/rag/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      GOOGLE_API_KEY:         ${GOOGLE_API_KEY}
+      GOOGLE_EMBEDDING_MODEL: models/gemini-embedding-001
+      GOOGLE_CHAT_MODEL:      gemini-3.6-flash
+      DATABASE_URL:           postgresql://opsbrain:${POSTGRES_PASSWORD}@postgres:5432/opsbrain
+    volumes:
+      - ./docs:/app/data:ro   # mount docs so you can add runbooks without rebuilding
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: [full]
+
+  # ── Orchestrator (Stage 2) ──────────────────────────────────────────────────
+  orchestrator:
+    build:
+      context: .
+      dockerfile: orchestrator/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+    profiles: [full]
+
+  # ── Monitoring Agent (Stage 2) ───────────────────────────────────────────────
+  monitoring-agent:
+    build:
+      context: .
+      dockerfile: agents/monitoring/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    environment:
+      PROMETHEUS_BASE_URL:                 http://prometheus:9090
+      GRAFANA_BASE_URL:                    http://grafana:3000
+      GRAFANA_API_TOKEN:                   ${GRAFANA_API_TOKEN}
+      ALERTMANAGER_BASE_URL:               http://alertmanager:9093
+      MONITORING_TIMEOUT_SECONDS:          10
+      MONITORING_DEFAULT_LOOKBACK_MINUTES: 15
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    profiles: [full]
+
+  # ── Infra Agent (Stage 2) ───────────────────────────────────────────────────
+  infra-agent:
+    build:
+      context: .
+      dockerfile: agents/infra/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8003:8003"
+    environment:
+      AWS_REGION:            ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID:     ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      KUBECONFIG:            ${KUBECONFIG:-}
+      TERRAFORM_DIR:         /app/infra/terraform
+    volumes:
+      - ./infra/terraform:/app/infra/terraform:ro
+    profiles: [full]
+
+  # ── Code Agent (Stage 2) ────────────────────────────────────────────────────
+  code-agent:
+    build:
+      context: .
+      dockerfile: agents/code/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8004:8004"
+    environment:
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_REPO:  ${GITHUB_REPO:-}
+    profiles: [full]
+
+  # ── Prometheus ───────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      alertmanager:
+        condition: service_started
+      pod-metrics:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:9090/-/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    profiles: [full]
+
+  # ── Alertmanager (feeds Prometheus demo alert rule) ──────────────────────────
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./infra/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    profiles: [full]
+
+  # ── Grafana ───────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.2.0
+    restart: unless-stopped
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED:   "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE:  Admin
+      GF_AUTH_DISABLE_LOGIN_FORM:  "true"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    profiles: [full]
+
+  # ── Demo metrics exporter (fake kube-state-metrics for the demo alert) ───────
+  pod-metrics:
+    build:
+      context: .
+      dockerfile: agents/monitoring/demo-metrics.Dockerfile
+    restart: unless-stopped
+    ports:
+      - "9100:9100"
+    profiles: [full]
+
+  # ── Kafka (Stage 2) ─────────────────────────────────────────────────────────
+  kafka:
+    image: bitnamilegacy/kafka:3.7
+    restart: unless-stopped
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_CFG_NODE_ID:                        0
+      KAFKA_CFG_PROCESS_ROLES:                  controller,broker
+      KAFKA_CFG_LISTENERS:                      PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_CFG_ADVERTISED_LISTENERS:           PLAINTEXT://kafka:9092
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS:       0@kafka:9093
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES:      CONTROLLER
+    volumes:
+      - kafka_data:/bitnami/kafka
+    profiles: [full]
+
+volumes:
+  postgres_data:
+  kafka_data:
+  prometheus_data:
+  grafana_data:

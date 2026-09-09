@@ -1,0 +1,53 @@
+# Monitoring Agent — Kubernetes Deployment + Service
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monitoring-agent
+  namespace: opsbrain
+  labels:
+    app: monitoring-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: monitoring-agent
+  template:
+    metadata:
+      labels:
+        app: monitoring-agent
+    spec:
+      containers:
+        - name: monitoring-agent
+          image: <AWS_ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/opsbrain-monitoring:latest
+          ports:
+            - containerPort: 8002
+          env:
+            - name: PROMETHEUS_URL
+              value: "http://prometheus:9090"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 10
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: monitoring-agent
+  namespace: opsbrain
+spec:
+  selector:
+    app: monitoring-agent
+  ports:
+    - port: 8002
+      targetPort: 8002
+  type: ClusterIP

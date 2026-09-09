@@ -1,0 +1,53 @@
+# Infra Agent — Kubernetes Deployment + Service
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: infra-agent
+  namespace: opsbrain
+  labels:
+    app: infra-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: infra-agent
+  template:
+    metadata:
+      labels:
+        app: infra-agent
+    spec:
+      containers:
+        - name: infra-agent
+          image: <AWS_ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/opsbrain-infra:latest
+          ports:
+            - containerPort: 8003
+          env:
+            - name: AWS_REGION
+              value: "us-east-1"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8003
+            initialDelaySeconds: 10
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: infra-agent
+  namespace: opsbrain
+spec:
+  selector:
+    app: infra-agent
+  ports:
+    - port: 8003
+      targetPort: 8003
+  type: ClusterIP
