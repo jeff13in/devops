@@ -3,3 +3,16 @@
 # Rifat's pulled-in RAG code (agents/rag/ingestor.py, retriever.py) purely for lint
 # compliance — see opsbrain/memory.md on that code being his to touch, not ours.
 ignore = ["SIM117"]
+
+[tool.ruff.lint.per-file-ignores]
+# scripts/validate_rag.py's broad `except Exception` is deliberate — it stops
+# psycopg/API exceptions (which can embed connection strings or credentials)
+# from being printed. Narrowing it would be a real behavior change, not ours
+# to make to Rifat's script.
+"scripts/validate_rag.py" = ["BLE001"]
+
+[tool.pytest.ini_options]
+# tests/ imports `rag.*` / `monitoring.*` (Rifat's own package names, matching his
+# branch's layout). Those packages live under agents/ here, so add it to the path
+# rather than rewriting his import statements.
+pythonpath = ["agents"]
