@@ -96,6 +96,98 @@ class CodeAgent:
             "check_runs": check_runs,
         }
 
+    # ── Commits ──────────────────────────────────────────────────────────
+
+    def list_commits(self, *, branch: str | None = None, limit: int = 10) -> dict[str, Any]:
+        self._require_repo()
+        params: dict[str, Any] = {"per_page": min(limit, 100)}
+        if branch:
+            params["sha"] = branch
+        payload = self._request_json(
+            "GET", f"/repos/{self.config.github_repo}/commits", params=params
+        )
+        commits = [self._normalize_commit(commit) for commit in payload]
+        return {
+            "repo": self.config.github_repo,
+            "branch": branch,
+            "count": len(commits),
+            "commits": commits,
+        }
+
+    def get_commit(self, sha: str) -> dict[str, Any]:
+        self._require_repo()
+        payload = self._request_json(
+            "GET", f"/repos/{self.config.github_repo}/commits/{sha}"
+        )
+        return self._normalize_commit(payload, detailed=True)
+
+    # ── Deployments ──────────────────────────────────────────────────────
+
+    def list_deployments(
+        self, *, environment: str | None = None, limit: int = 10
+    ) -> dict[str, Any]:
+        self._require_repo()
+        params: dict[str, Any] = {"per_page": min(limit, 100)}
+        if environment:
+            params["environment"] = environment
+        payload = self._request_json(
+            "GET", f"/repos/{self.config.github_repo}/deployments", params=params
+        )
+        deployments = [self._normalize_deployment(dep) for dep in payload]
+        return {
+            "repo": self.config.github_repo,
+            "count": len(deployments),
+            "deployments": deployments,
+        }
+
+    def get_deployment_status(self, deployment_id: int) -> dict[str, Any]:
+        self._require_repo()
+        payload = self._request_json(
+            "GET",
+            f"/repos/{self.config.github_repo}/deployments/{deployment_id}/statuses",
+        )
+        statuses = [
+            {
+                "state": status.get("state"),
+                "description": status.get("description"),
+                "created_at": status.get("created_at"),
+            }
+            for status in payload
+        ]
+        # GitHub returns statuses newest-first.
+        latest_state = statuses[0]["state"] if statuses else "unknown"
+        return {
+            "deployment_id": deployment_id,
+            "latest_state": latest_state,
+            "statuses": statuses,
+        }
+
+    # ── Triggering workflows ─────────────────────────────────────────────
+
+    def rerun_workflow(self, run_id: int, *, failed_jobs_only: bool = False) -> dict[str, Any]:
+        """Re-run a workflow run. Mutating — only call this on an explicit request."""
+        self._require_repo()
+        suffix = "rerun-failed-jobs" if failed_jobs_only else "rerun"
+        self._request_json(
+            "POST", f"/repos/{self.config.github_repo}/actions/runs/{run_id}/{suffix}"
+        )
+        return {"run_id": run_id, "action": suffix, "triggered": True}
+
+    def trigger_workflow(
+        self, workflow: str, *, ref: str = "main", inputs: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Dispatch a workflow_dispatch event. Mutating — only call this on an explicit request."""
+        self._require_repo()
+        body: dict[str, Any] = {"ref": ref}
+        if inputs:
+            body["inputs"] = inputs
+        self._request_json(
+            "POST",
+            f"/repos/{self.config.github_repo}/actions/workflows/{workflow}/dispatches",
+            body=body,
+        )
+        return {"workflow": workflow, "ref": ref, "triggered": True}
+
     # ── GitHub Actions ───────────────────────────────────────────────────
 
     def list_workflow_runs(
@@ -153,6 +245,24 @@ class CodeAgent:
                     "sources": [f"github:pull/{number}"],
                     "data": status,
                 }
+            if "commit" in q:
+                data = self.list_commits()
+                lines = [f"{c['sha'][:7]} {c['message']}" for c in data["commits"][:5]]
+                answer = (
+                    f"{data['count']} recent commit(s) — " + "; ".join(lines)
+                    if lines
+                    else "No commits found."
+                )
+                return {"answer": answer, "sources": ["github:commits"], "data": data}
+            if "deploy" in q:
+                data = self.list_deployments()
+                lines = [f"{d['environment']}@{d['sha'][:7]}" for d in data["deployments"][:5]]
+                answer = (
+                    f"{data['count']} recent deployment(s) — " + "; ".join(lines)
+                    if lines
+                    else "No deployments found."
+                )
+                return {"answer": answer, "sources": ["github:deployments"], "data": data}
             if "ci" in q or "pipeline" in q or "workflow" in q or "build" in q or "action" in q:
                 summary = self.summarize_ci()
                 lines = [
@@ -195,6 +305,32 @@ class CodeAgent:
             base["merged"] = pr.get("merged", False)
         return base
 
+    def _normalize_commit(self, commit: dict[str, Any], *, detailed: bool = False) -> dict[str, Any]:
+        info = commit.get("commit", {})
+        author = info.get("author") or {}
+        base = {
+            "sha": commit.get("sha"),
+            "message": info.get("message", "").split("\n")[0],
+            "author": author.get("name"),
+            "date": author.get("date"),
+            "url": commit.get("html_url"),
+        }
+        if detailed:
+            stats = commit.get("stats", {})
+            base["additions"] = stats.get("additions")
+            base["deletions"] = stats.get("deletions")
+            base["files_changed"] = len(commit.get("files", []))
+        return base
+
+    def _normalize_deployment(self, deployment: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": deployment.get("id"),
+            "sha": deployment.get("sha"),
+            "ref": deployment.get("ref"),
+            "environment": deployment.get("environment"),
+            "created_at": deployment.get("created_at"),
+        }
+
     def _normalize_run(self, run: dict[str, Any]) -> dict[str, Any]:
         return {
             "id": run.get("id"),
@@ -213,6 +349,7 @@ class CodeAgent:
         path: str,
         *,
         params: dict[str, Any] | None = None,
+        body: dict[str, Any] | None = None,
     ) -> Any:
         url = f"{self.config.github_api_base_url}{path}"
         if params:
@@ -226,10 +363,16 @@ class CodeAgent:
         if self.config.github_token:
             headers["Authorization"] = f"Bearer {self.config.github_token}"
 
-        request = Request(url, method=method, headers=headers)
+        data = None
+        if body is not None:
+            data = json.dumps(body).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+
+        request = Request(url, data=data, method=method, headers=headers)
         try:
             with urlopen(request, timeout=self.config.timeout_seconds) as response:
-                return json.loads(response.read().decode("utf-8"))
+                raw = response.read()
+                return json.loads(raw.decode("utf-8")) if raw else {}
         except HTTPError as exc:
             message = exc.read().decode("utf-8", errors="ignore").strip()
             raise CodeClientError(

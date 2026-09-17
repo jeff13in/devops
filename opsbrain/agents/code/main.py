@@ -40,6 +40,24 @@ class WorkflowRunListResponse(BaseModel):
     workflow_runs: list[dict[str, Any]]
 
 
+class CommitListResponse(BaseModel):
+    repo: str
+    branch: str | None
+    count: int
+    commits: list[dict[str, Any]]
+
+
+class DeploymentListResponse(BaseModel):
+    repo: str
+    count: int
+    deployments: list[dict[str, Any]]
+
+
+class WorkflowDispatchRequest(BaseModel):
+    ref: str = Field(default="main", min_length=1)
+    inputs: dict[str, Any] | None = None
+
+
 @lru_cache(maxsize=1)
 def get_agent() -> CodeAgent:
     return CodeAgent()
@@ -100,5 +118,65 @@ def list_runs(
 def actions_summary(branch: str | None = Query(default=None)) -> dict[str, Any]:
     try:
         return get_agent().summarize_ci(branch=branch)
+    except CodeClientError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/commits", response_model=CommitListResponse)
+def list_commits(
+    branch: str | None = Query(default=None),
+    limit: int = Query(default=10, ge=1, le=100),
+) -> CommitListResponse:
+    try:
+        return CommitListResponse(**get_agent().list_commits(branch=branch, limit=limit))
+    except CodeClientError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/commits/{sha}")
+def get_commit(sha: str) -> dict[str, Any]:
+    try:
+        return get_agent().get_commit(sha)
+    except CodeClientError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/deployments", response_model=DeploymentListResponse)
+def list_deployments(
+    environment: str | None = Query(default=None),
+    limit: int = Query(default=10, ge=1, le=100),
+) -> DeploymentListResponse:
+    try:
+        return DeploymentListResponse(
+            **get_agent().list_deployments(environment=environment, limit=limit)
+        )
+    except CodeClientError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/deployments/{deployment_id}/status")
+def get_deployment_status(deployment_id: int) -> dict[str, Any]:
+    try:
+        return get_agent().get_deployment_status(deployment_id)
+    except CodeClientError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/actions/runs/{run_id}/rerun")
+def rerun_workflow(
+    run_id: int, failed_jobs_only: bool = Query(default=False)
+) -> dict[str, Any]:
+    try:
+        return get_agent().rerun_workflow(run_id, failed_jobs_only=failed_jobs_only)
+    except CodeClientError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/actions/workflows/{workflow}/dispatch")
+def trigger_workflow(workflow: str, request: WorkflowDispatchRequest) -> dict[str, Any]:
+    try:
+        return get_agent().trigger_workflow(
+            workflow, ref=request.ref, inputs=request.inputs
+        )
     except CodeClientError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
