@@ -116,12 +116,59 @@ class InfraAgent:
             "state_breakdown": dict(by_state),
         }
 
+    def list_eks_clusters(self) -> dict[str, Any]:
+        if boto3 is None:
+            raise InfraClientError("boto3 is not installed; AWS queries are unavailable.")
+        try:
+            eks = boto3.client("eks", region_name=self.config.aws_region)
+            names = eks.list_clusters().get("clusters", [])
+            clusters = [
+                {
+                    "name": name,
+                    "status": eks.describe_cluster(name=name)["cluster"]["status"],
+                }
+                for name in names
+            ]
+        except (BotoCoreError, BotoClientError) as exc:
+            raise InfraClientError(f"Could not query AWS EKS: {exc}") from exc
+        return {
+            "region": self.config.aws_region,
+            "count": len(clusters),
+            "clusters": clusters,
+        }
+
+    def list_rds_instances(self) -> dict[str, Any]:
+        if boto3 is None:
+            raise InfraClientError("boto3 is not installed; AWS queries are unavailable.")
+        try:
+            rds = boto3.client("rds", region_name=self.config.aws_region)
+            response = rds.describe_db_instances()
+        except (BotoCoreError, BotoClientError) as exc:
+            raise InfraClientError(f"Could not query AWS RDS: {exc}") from exc
+
+        instances = [
+            {
+                "identifier": inst.get("DBInstanceIdentifier"),
+                "status": inst.get("DBInstanceStatus"),
+                "engine": inst.get("Engine"),
+                "instance_class": inst.get("DBInstanceClass"),
+            }
+            for inst in response.get("DBInstances", [])
+        ]
+        by_status = Counter(inst["status"] for inst in instances)
+        return {
+            "region": self.config.aws_region,
+            "count": len(instances),
+            "status_breakdown": dict(by_status),
+            "instances": instances,
+        }
+
     # ── Kubernetes ───────────────────────────────────────────────────────
 
     def _k8s_available(self) -> bool:
         return k8s_client is not None
 
-    def _load_k8s(self) -> Any:
+    def _ensure_k8s_config(self) -> None:
         if k8s_client is None:
             raise InfraClientError("kubernetes client library is not installed.")
         if not self._k8s_loaded:
@@ -133,7 +180,18 @@ class InfraAgent:
             except Exception as exc:
                 raise InfraClientError(f"Could not load Kubernetes config: {exc}") from exc
             self._k8s_loaded = True
+
+    def _load_k8s(self) -> Any:
+        self._ensure_k8s_config()
         return k8s_client.CoreV1Api()
+
+    def _apps_api(self) -> Any:
+        self._ensure_k8s_config()
+        return k8s_client.AppsV1Api()
+
+    def _metrics_api(self) -> Any:
+        self._ensure_k8s_config()
+        return k8s_client.CustomObjectsApi()
 
     def get_pod_health(self, *, namespace: str | None = None) -> dict[str, Any]:
         api = self._load_k8s()
@@ -191,6 +249,86 @@ class InfraAgent:
             )
         return {"total_nodes": len(results), "nodes": results}
 
+    def list_deployments(self, *, namespace: str | None = None) -> dict[str, Any]:
+        api = self._apps_api()
+        try:
+            deployments = (
+                api.list_namespaced_deployment(namespace)
+                if namespace
+                else api.list_deployment_for_all_namespaces()
+            )
+        except K8sApiException as exc:
+            raise InfraClientError(f"Could not list Kubernetes deployments: {exc}") from exc
+
+        results = []
+        for dep in deployments.items:
+            status = dep.status
+            desired = dep.spec.replicas or 0
+            ready = status.ready_replicas or 0
+            results.append(
+                {
+                    "namespace": dep.metadata.namespace,
+                    "name": dep.metadata.name,
+                    "desired": desired,
+                    "ready": ready,
+                    "available": status.available_replicas or 0,
+                    "updated": status.updated_replicas or 0,
+                }
+            )
+        counts = Counter(
+            "healthy" if dep["ready"] == dep["desired"] else "degraded" for dep in results
+        )
+        return {
+            "namespace": namespace,
+            "total_deployments": len(results),
+            "status_breakdown": dict(counts),
+            "deployments": results,
+        }
+
+    def get_node_resource_usage(self) -> dict[str, Any]:
+        api = self._metrics_api()
+        try:
+            raw = api.list_cluster_custom_object("metrics.k8s.io", "v1beta1", "nodes")
+        except K8sApiException as exc:
+            raise InfraClientError(
+                f"Could not read node resource usage (metrics-server may not be installed): {exc}"
+            ) from exc
+
+        nodes = [
+            {
+                "name": item.get("metadata", {}).get("name"),
+                "cpu": item.get("usage", {}).get("cpu"),
+                "memory": item.get("usage", {}).get("memory"),
+            }
+            for item in raw.get("items", [])
+        ]
+        return {"total_nodes": len(nodes), "nodes": nodes}
+
+    # ── Aggregate health ─────────────────────────────────────────────────
+
+    def get_health_summary(self) -> dict[str, Any]:
+        """Combine AWS, Kubernetes, and Terraform signals into one health snapshot.
+
+        Each check runs independently so one unavailable backend (e.g. no AWS
+        credentials in a local dev environment) doesn't block the others.
+        """
+        summary: dict[str, Any] = {"overall": "healthy", "checks": {}}
+
+        def _run(name: str, fn: Any) -> None:
+            try:
+                summary["checks"][name] = {"ok": True, "data": fn()}
+            except InfraClientError as exc:
+                summary["checks"][name] = {"ok": False, "error": str(exc)}
+                summary["overall"] = "degraded"
+
+        _run("ec2", self.summarize_ec2)
+        _run("eks", self.list_eks_clusters)
+        _run("rds", self.list_rds_instances)
+        _run("nodes", self.list_nodes)
+        _run("pods", self.get_pod_health)
+        _run("deployments", self.list_deployments)
+        return summary
+
     # ── Terraform ────────────────────────────────────────────────────────
 
     def _terraform_available(self) -> bool:
@@ -243,6 +381,15 @@ class InfraAgent:
         """Best-effort natural-language entry point used by the orchestrator's /query contract."""
         q = question.lower()
         try:
+            if "health" in q or "summary" in q or "overall" in q:
+                data = self.get_health_summary()
+                return {"answer": self._format_health_summary(data), "sources": ["infra:health"], "data": data}
+            if "deployment" in q:
+                data = self.list_deployments()
+                return {"answer": self._format_deployments(data), "sources": ["kubernetes:deployments"], "data": data}
+            if "usage" in q or "resource" in q or "cpu" in q or "memory" in q:
+                data = self.get_node_resource_usage()
+                return {"answer": self._format_usage(data), "sources": ["kubernetes:metrics"], "data": data}
             if "node" in q:
                 data = self.list_nodes()
                 return {"answer": self._format_nodes(data), "sources": ["kubernetes:nodes"], "data": data}
@@ -252,6 +399,12 @@ class InfraAgent:
             if "terraform" in q or "plan" in q:
                 data = self.get_terraform_plan_summary()
                 return {"answer": self._format_terraform(data), "sources": ["terraform:plan"], "data": data}
+            if "eks" in q:
+                data = self.list_eks_clusters()
+                return {"answer": self._format_eks(data), "sources": ["aws:eks"], "data": data}
+            if "rds" in q or "database" in q:
+                data = self.list_rds_instances()
+                return {"answer": self._format_rds(data), "sources": ["aws:rds"], "data": data}
             data = self.summarize_ec2()
             return {"answer": self._format_ec2_summary(data), "sources": ["aws:ec2"], "data": data}
         except InfraClientError as exc:
@@ -282,3 +435,38 @@ class InfraAgent:
             return "Terraform plan shows no pending resource changes."
         breakdown = ", ".join(f"{k}: {v}" for k, v in data["action_breakdown"].items())
         return f"Terraform plan has {data['resource_change_count']} change(s) — {breakdown}."
+
+    @staticmethod
+    def _format_deployments(data: dict[str, Any]) -> str:
+        if data["total_deployments"] == 0:
+            return "No deployments found."
+        breakdown = ", ".join(f"{k}: {v}" for k, v in data["status_breakdown"].items())
+        return f"{data['total_deployments']} deployment(s) — {breakdown}."
+
+    @staticmethod
+    def _format_usage(data: dict[str, Any]) -> str:
+        if data["total_nodes"] == 0:
+            return "No node metrics available."
+        parts = ", ".join(f"{n['name']}: cpu={n['cpu']} mem={n['memory']}" for n in data["nodes"])
+        return f"Node resource usage — {parts}."
+
+    @staticmethod
+    def _format_eks(data: dict[str, Any]) -> str:
+        if data["count"] == 0:
+            return f"No EKS clusters found in {data['region']}."
+        breakdown = ", ".join(f"{c['name']}: {c['status']}" for c in data["clusters"])
+        return f"{data['count']} EKS cluster(s) in {data['region']} — {breakdown}."
+
+    @staticmethod
+    def _format_rds(data: dict[str, Any]) -> str:
+        if data["count"] == 0:
+            return f"No RDS instances found in {data['region']}."
+        breakdown = ", ".join(f"{k}: {v}" for k, v in data["status_breakdown"].items())
+        return f"{data['count']} RDS instance(s) in {data['region']} — {breakdown}."
+
+    @staticmethod
+    def _format_health_summary(data: dict[str, Any]) -> str:
+        failed = [name for name, check in data["checks"].items() if not check["ok"]]
+        if not failed:
+            return f"Infra health: {data['overall']} — all checks passed."
+        return f"Infra health: {data['overall']} — failed checks: {', '.join(failed)}."

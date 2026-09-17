@@ -21,6 +21,10 @@ langchain-openai
 boto3
 kubernetes
 
+# shared kafka client
+kafka-python
+
 # tooling
 ruff
 pytest
+moto

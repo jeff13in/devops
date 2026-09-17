@@ -44,6 +44,26 @@ class NodeListResponse(BaseModel):
     nodes: list[dict[str, Any]]
 
 
+class DeploymentListResponse(BaseModel):
+    namespace: str | None
+    total_deployments: int
+    status_breakdown: dict[str, int]
+    deployments: list[dict[str, Any]]
+
+
+class EksListResponse(BaseModel):
+    region: str
+    count: int
+    clusters: list[dict[str, Any]]
+
+
+class RdsListResponse(BaseModel):
+    region: str
+    count: int
+    status_breakdown: dict[str, int]
+    instances: list[dict[str, Any]]
+
+
 @lru_cache(maxsize=1)
 def get_agent() -> InfraAgent:
     return InfraAgent()
@@ -97,3 +117,40 @@ def terraform_plan(plan_file: str | None = Query(default=None)) -> dict[str, Any
         return get_agent().get_terraform_plan_summary(plan_file=plan_file)
     except InfraClientError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/k8s/deployments", response_model=DeploymentListResponse)
+def list_deployments(namespace: str | None = Query(default=None, min_length=1)) -> DeploymentListResponse:
+    try:
+        return DeploymentListResponse(**get_agent().list_deployments(namespace=namespace))
+    except InfraClientError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/k8s/usage")
+def node_resource_usage() -> dict[str, Any]:
+    try:
+        return get_agent().get_node_resource_usage()
+    except InfraClientError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/aws/eks", response_model=EksListResponse)
+def list_eks_clusters() -> EksListResponse:
+    try:
+        return EksListResponse(**get_agent().list_eks_clusters())
+    except InfraClientError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/aws/rds", response_model=RdsListResponse)
+def list_rds_instances() -> RdsListResponse:
+    try:
+        return RdsListResponse(**get_agent().list_rds_instances())
+    except InfraClientError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/health/summary")
+def health_summary() -> dict[str, Any]:
+    return get_agent().get_health_summary()
