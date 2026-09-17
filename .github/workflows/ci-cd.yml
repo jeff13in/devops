@@ -148,6 +148,13 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-push
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # This job only calls the external ArgoCD API — it never checks out the
+    # repo, so the workflow-wide `defaults.run.working-directory: opsbrain`
+    # doesn't apply: that directory would never exist in this job's
+    # workspace. Override back to the runner's default workspace root.
+    defaults:
+      run:
+        working-directory: .
 
     steps:
       - name: Trigger ArgoCD sync
